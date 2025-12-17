@@ -1,0 +1,14 @@
+[project]
+name = "line-echo-bot"
+version = "0.1.0"
+description = "A simple LINE Echo Bot using Python and Flask"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.0.0",
+    "line-bot-sdk>=3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
