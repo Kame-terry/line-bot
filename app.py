@@ -67,7 +67,7 @@ openai_client = OpenAI(api_key=openai_api_key)
 
 def save_to_notion(text):
     if not notion_token or not notion_database_id or "your_" in notion_token:
-        print("Notion configurations are missing.")
+        app.logger.error("Notion configurations are missing or invalid.")
         return False
 
     headers = {
@@ -82,7 +82,7 @@ def save_to_notion(text):
     data = {
         "parent": {"database_id": notion_database_id},
         "properties": {
-            "Name": {
+            "name": {
                 "title": [
                     {
                         "text": {
@@ -111,14 +111,16 @@ def save_to_notion(text):
     }
 
     try:
+        app.logger.info(f"Attempting to save to Notion DB: {notion_database_id}")
         response = requests.post("https://api.notion.com/v1/pages", headers=headers, data=json.dumps(data))
         if response.status_code == 200:
+            app.logger.info("Successfully saved to Notion.")
             return True
         else:
-            print(f"Failed to save to Notion: {response.status_code}, {response.text}")
+            app.logger.error(f"Failed to save to Notion. Status: {response.status_code}, Response: {response.text}")
             return False
     except Exception as e:
-        print(f"Error saving to Notion: {e}")
+        app.logger.error(f"Error saving to Notion: {e}")
         return False
 
 @app.route("/", methods=['GET'])
