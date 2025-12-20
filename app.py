@@ -259,6 +259,7 @@ def fetch_url_content(url):
                     
                     if not text:
                         app.logger.warning(f"Text field is empty. Full item for debug: {json.dumps(post, ensure_ascii=False)[:1000]}")
+                        return "這是一則 Facebook 貼文或影片，但爬蟲無法提取到文字內容（可能是純影片或隱私設定限制）。"
                     
                     return text[:8000]
                 else:
