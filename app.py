@@ -253,12 +253,13 @@ def fetch_url_content(url):
                     post = dataset_items[0]
                     # 印出第一筆資料的結構以供除錯
                     app.logger.info(f"First item keys: {list(post.keys())}")
-                    app.logger.info(f"First item content sample: {str(post)[:200]}")
-
-                    text = post.get("text") or post.get("postText") or ""
-                    # 如果有 comments 也可以抓，這裡先只抓內文
+                    
+                    # 嘗試多個可能的文字欄位 (增加 Reels 支援)
+                    text = post.get("text") or post.get("postText") or post.get("caption") or post.get("description") or ""
+                    
                     if not text:
-                         app.logger.warning("Text field is empty in the dataset item.")
+                        app.logger.warning(f"Text field is empty. Full item for debug: {json.dumps(post, ensure_ascii=False)[:1000]}")
+                    
                     return text[:8000]
                 else:
                     app.logger.warning("Apify run completed but returned no items.")
