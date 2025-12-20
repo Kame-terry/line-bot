@@ -224,75 +224,98 @@ def fetch_url_content(url):
         # 判斷是否為 Facebook
         if "facebook.com" in url or "fb.watch" in url:
             if not apify_client:
+                app.logger.error("Apify client is not initialized. APIFY_API_TOKEN missing?")
                 return "錯誤：未設定 Apify API Token，無法爬取 Facebook。"
-            app.logger.info(f"Using Apify for Facebook URL: {url}")
+            app.logger.info(f"Starting Apify task for Facebook URL: {url}")
             
-            # 使用 apify/facebook-posts-scraper
-            run_input = {
-                "startUrls": [{"url": url}],
-                "resultsLimit": 1,
-            }
-            # 改用 Actor 名稱呼叫
-            run = apify_client.actor("apify/facebook-posts-scraper").call(run_input=run_input)
-            
-            # 取得結果
-            dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
-            if dataset_items:
-                post = dataset_items[0]
-                text = post.get("text") or post.get("postText") or ""
-                # 如果有 comments 也可以抓，這裡先只抓內文
-                return text[:8000]
-            else:
-                return "Apify 未能抓取到內容，可能是權限或貼文不存在。"
+            try:
+                # 使用 apify/facebook-posts-scraper
+                run_input = {
+                    "startUrls": [{"url": url}],
+                    "resultsLimit": 1,
+                }
+                # 改用 Actor 名稱呼叫
+                run = apify_client.actor("apify/facebook-posts-scraper").call(run_input=run_input)
+                app.logger.info(f"Apify run finished. Dataset ID: {run.get('defaultDatasetId')}")
+                
+                # 取得結果
+                dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
+                if dataset_items:
+                    post = dataset_items[0]
+                    text = post.get("text") or post.get("postText") or ""
+                    # 如果有 comments 也可以抓，這裡先只抓內文
+                    return text[:8000]
+                else:
+                    app.logger.warning("Apify run completed but returned no items.")
+                    return "Apify 未能抓取到內容，可能是權限或貼文不存在。"
+            except Exception as e:
+                app.logger.error(f"Apify execution failed: {e}")
+                return f"Facebook 爬蟲執行失敗: {str(e)}"
 
         # 判斷是否為 Threads
         elif "threads.net" in url:
             if not apify_client:
+                app.logger.error("Apify client is not initialized. APIFY_API_TOKEN missing?")
                 return "錯誤：未設定 Apify API Token，無法爬取 Threads。"
-            app.logger.info(f"Using Apify for Threads URL: {url}")
+            app.logger.info(f"Starting Apify task for Threads URL: {url}")
             
-            # 使用 apify/threads-scraper
-            run_input = {
-                "startUrls": [url],
-                "maxPostCount": 1,
-            }
-            # 改用 Actor 名稱呼叫
-            run = apify_client.actor("apify/threads-scraper").call(run_input=run_input)
-            
-            dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
-            if dataset_items:
-                thread = dataset_items[0]
-                text = thread.get("thread_items", [{}])[0].get("post", {}).get("caption", {}).get("text", "")
-                if not text:
-                     text = thread.get("text") or "" # 嘗試其他可能的欄位
-                return text[:8000]
-            else:
-                 return "Apify 未能抓取到內容。"
+            try:
+                # 使用 apify/threads-scraper
+                run_input = {
+                    "startUrls": [url],
+                    "maxPostCount": 1,
+                }
+                # 改用 Actor 名稱呼叫
+                run = apify_client.actor("apify/threads-scraper").call(run_input=run_input)
+                
+                dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
+                if dataset_items:
+                    thread = dataset_items[0]
+                    text = thread.get("thread_items", [{}])[0].get("post", {}).get("caption", {}).get("text", "")
+                    if not text:
+                         text = thread.get("text") or "" # 嘗試其他可能的欄位
+                    return text[:8000]
+                else:
+                     app.logger.warning("Apify run completed but returned no items.")
+                     return "Apify 未能抓取到內容。"
+            except Exception as e:
+                app.logger.error(f"Apify execution failed: {e}")
+                return f"Threads 爬蟲執行失敗: {str(e)}"
 
         # 一般網頁爬取
+        app.logger.info(f"Starting general web scraping for URL: {url}")
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        
-        # 使用 BeautifulSoup 解析 HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 移除 script, style 等不相關標籤
-        for script in soup(["script", "style", "nav", "footer", "iframe"]):
-            script.extract()
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            app.logger.info(f"Web request finished. Status Code: {response.status_code}")
+            response.raise_for_status()
             
-        # 取得純文字
-        text = soup.get_text()
-        
-        # 清理多餘空白
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
-        
-        # 限制回傳長度，避免 Token 爆量 (取前 8000 字)
-        return text[:8000]
+            # 使用 BeautifulSoup 解析 HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 移除 script, style 等不相關標籤
+            for script in soup(["script", "style", "nav", "footer", "iframe"]):
+                script.extract()
+                
+            # 取得純文字
+            text = soup.get_text()
+            
+            # 清理多餘空白
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+            
+            if not text:
+                app.logger.warning("Web scraping returned empty text.")
+            
+            # 限制回傳長度，避免 Token 爆量 (取前 8000 字)
+            return text[:8000]
+        except requests.exceptions.RequestException as re:
+            app.logger.error(f"Web request failed: {re}")
+            return f"網頁請求失敗 (Status: {getattr(re.response, 'status_code', 'Unknown')}): {str(re)}"
+            
     except Exception as e:
         app.logger.error(f"Error fetching URL {url}: {e}")
         return None
