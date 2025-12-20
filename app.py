@@ -48,6 +48,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from bs4 import BeautifulSoup
+from apify_client import ApifyClient
 
 app = Flask(__name__)
 
@@ -58,6 +59,7 @@ openai_api_key = os.getenv('OPENAI_API_KEY')
 notion_token = os.getenv('NOTION_API_TOKEN')
 notion_database_id = os.getenv('NOTION_DATABASE_ID')
 allowed_user_id = os.getenv('ALLOWED_USER_ID')
+apify_api_token = os.getenv('APIFY_API_TOKEN')
 
 if channel_secret is None:
     print('Error: LINE_CHANNEL_SECRET is not defined in environment variables.')
@@ -72,6 +74,8 @@ if openai_api_key is None:
 handler = WebhookHandler(channel_secret)
 configuration = Configuration(access_token=channel_access_token)
 openai_client = OpenAI(api_key=openai_api_key)
+# 初始化 Apify Client
+apify_client = ApifyClient(apify_api_token) if apify_api_token else None
 
 def get_ai_title_and_summary(text):
     try:
@@ -217,7 +221,55 @@ def callback():
 def fetch_url_content(url):
     """爬取網頁內容並回傳純文字"""
     try:
-        # 模擬瀏覽器 User-Agent，避免被某些網站擋下
+        # 判斷是否為 Facebook
+        if "facebook.com" in url or "fb.watch" in url:
+            if not apify_client:
+                return "錯誤：未設定 Apify API Token，無法爬取 Facebook。"
+            app.logger.info(f"Using Apify for Facebook URL: {url}")
+            
+            # 使用 apify/facebook-posts-scraper
+            run_input = {
+                "startUrls": [{"url": url}],
+                "resultsLimit": 1,
+            }
+            # 改用 Actor 名稱呼叫
+            run = apify_client.actor("apify/facebook-posts-scraper").call(run_input=run_input)
+            
+            # 取得結果
+            dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
+            if dataset_items:
+                post = dataset_items[0]
+                text = post.get("text") or post.get("postText") or ""
+                # 如果有 comments 也可以抓，這裡先只抓內文
+                return text[:8000]
+            else:
+                return "Apify 未能抓取到內容，可能是權限或貼文不存在。"
+
+        # 判斷是否為 Threads
+        elif "threads.net" in url:
+            if not apify_client:
+                return "錯誤：未設定 Apify API Token，無法爬取 Threads。"
+            app.logger.info(f"Using Apify for Threads URL: {url}")
+            
+            # 使用 apify/threads-scraper
+            run_input = {
+                "startUrls": [url],
+                "maxPostCount": 1,
+            }
+            # 改用 Actor 名稱呼叫
+            run = apify_client.actor("apify/threads-scraper").call(run_input=run_input)
+            
+            dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
+            if dataset_items:
+                thread = dataset_items[0]
+                text = thread.get("thread_items", [{}])[0].get("post", {}).get("caption", {}).get("text", "")
+                if not text:
+                     text = thread.get("text") or "" # 嘗試其他可能的欄位
+                return text[:8000]
+            else:
+                 return "Apify 未能抓取到內容。"
+
+        # 一般網頁爬取
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
@@ -246,140 +298,287 @@ def fetch_url_content(url):
         return None
 
 @handler.add(MessageEvent, message=TextMessageContent)
+
 def handle_message(event):
+
     user_id = event.source.user_id
+
     if allowed_user_id and user_id != allowed_user_id:
+
         # 非白名單使用者，不回應或回應無權限
+
         return
+
+
 
     text = event.message.text.strip()
 
+
+
     with ApiClient(configuration) as api_client:
+
         line_bot_api = MessagingApi(api_client)
 
+
+
         if text.startswith("/a"):
+
             # 處理文字摘要請求
+
             content_to_summarize = text[2:].strip()
+
             if not content_to_summarize:
+
                 line_bot_api.reply_message(
+
                     ReplyMessageRequest(
+
                         reply_token=event.reply_token,
+
                         messages=[TextMessage(text="請在 /a 後面加上要摘要的文字。")]
+
                     )
+
                 )
+
                 return
 
+
+
             try:
+
                 # 產生標題與摘要
+
                 ai_title, ai_summary = get_ai_title_and_summary(content_to_summarize)
+
                 
+
                 # 儲存到 Notion
+
                 notion_status = ""
+
                 record_time = ""
+
                 if notion_token and notion_database_id and "your_" not in notion_token:
+
                     success, time_str = save_to_notion_enhanced(
+
                         content_to_summarize, 
+
                         ai_title, 
+
                         ai_summary, 
+
                         user_id, 
+
                         type_name="文字摘要"
+
                     )
+
                     if success:
+
                         notion_status = "\n\n(已儲存摘要至 Notion)"
+
                         record_time = time_str
+
                     else:
+
                         notion_status = "\n\n(Notion 儲存失敗)"
+
                 
+
                 # 回覆使用者
-                # 如果沒有儲存成功，時間使用當下時間
+
                 if not record_time:
+
                     tz = timezone(timedelta(hours=8))
+
                     record_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
 
                 reply_msg = f"【{ai_title}】\n\n{ai_summary}\n\n---\n原始文字：{content_to_summarize[:50]}...\n\n時間：{record_time}{notion_status}"
+
                 
+
                 line_bot_api.reply_message(
+
                     ReplyMessageRequest(
+
                         reply_token=event.reply_token,
+
                         messages=[TextMessage(text=reply_msg)]
+
                     )
+
                 )
+
             except Exception as e:
+
                 app.logger.error(f"Error processing text summary: {e}")
+
                 line_bot_api.reply_message(
+
                     ReplyMessageRequest(
+
                         reply_token=event.reply_token,
+
                         messages=[TextMessage(text="抱歉，摘要處理失敗。")]
+
                     )
+
                 )
+
+
 
         elif text.startswith("http://") or text.startswith("https://"):
+
             # 處理網址摘要
+
             url = text
+
             try:
-                # 1. 爬取網頁內容
+
+                # 1. 辨別類型
+
+                type_name = "網頁摘要"
+
+                if "facebook.com" in url or "fb.watch" in url:
+
+                    type_name = "fb"
+
+                elif "threads.net" in url:
+
+                    type_name = "threads"
+
+
+
+                # 2. 爬取網頁內容
+
                 web_content = fetch_url_content(url)
+
                 
+
                 if not web_content:
+
                     line_bot_api.reply_message(
+
                         ReplyMessageRequest(
+
                             reply_token=event.reply_token,
+
                             messages=[TextMessage(text="無法讀取網頁內容，可能是網站有防護或連結無效。")]
+
                         )
+
                     )
+
                     return
 
-                # 2. 產生標題與摘要
+
+
+                # 3. 產生標題與摘要
+
                 ai_title, ai_summary = get_ai_title_and_summary(web_content)
+
                 
-                # 3. 儲存到 Notion (包含 URL)
+
+                # 4. 儲存到 Notion (包含 URL 與類型)
+
                 notion_status = ""
+
                 record_time = ""
+
                 if notion_token and notion_database_id and "your_" not in notion_token:
+
                     success, time_str = save_to_notion_enhanced(
-                        web_content, # 內容存爬取到的文字
+
+                        web_content, 
+
                         ai_title, 
+
                         ai_summary, 
+
                         user_id, 
-                        type_name="網頁摘要",
+
+                        type_name=type_name,
+
                         url=url
+
                     )
+
                     if success:
+
                         notion_status = "\n\n(已儲存摘要至 Notion)"
+
                         record_time = time_str
+
                     else:
+
                         notion_status = "\n\n(Notion 儲存失敗)"
+
                 
-                # 4. 回覆使用者
+
+                # 5. 回覆使用者
+
                 if not record_time:
+
                     tz = timezone(timedelta(hours=8))
+
                     record_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
 
-                reply_msg = f"【{ai_title}】\n\n{ai_summary}\n\n---\n來源：{url}\n\n時間：{record_time}{notion_status}"
+
+
+                reply_msg = f"【{ai_title}】({type_name})\n\n{ai_summary}\n\n---\n來源：{url}\n\n時間：{record_time}{notion_status}"
+
                 
+
                 line_bot_api.reply_message(
+
                     ReplyMessageRequest(
+
                         reply_token=event.reply_token,
+
                         messages=[TextMessage(text=reply_msg)]
+
                     )
-                )
-                
-            except Exception as e:
-                app.logger.error(f"Error processing URL summary: {e}")
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[TextMessage(text="抱歉，網頁摘要處理失敗。")]
-                    )
+
                 )
 
-        else:
-            # 回覆一樣的訊息 (Echo)
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=event.message.text)]
+                
+
+            except Exception as e:
+
+                app.logger.error(f"Error processing URL summary: {e}")
+
+                line_bot_api.reply_message(
+
+                    ReplyMessageRequest(
+
+                        reply_token=event.reply_token,
+
+                        messages=[TextMessage(text="抱歉，網頁摘要處理失敗。")]
+
+                    )
+
                 )
+
+
+
+        else:
+
+            # 回覆一樣的訊息 (Echo)
+
+            line_bot_api.reply_message(
+
+                ReplyMessageRequest(
+
+                    reply_token=event.reply_token,
+
+                    messages=[TextMessage(text=event.message.text)]
+
+                )
+
             )
 
 @handler.add(MessageEvent, message=AudioMessageContent)
