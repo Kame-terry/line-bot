@@ -93,7 +93,7 @@ def get_ai_title_and_summary(text):
         app.logger.error(f"Error in AI processing: {e}")
         return text[:20], "無法產生摘要"
 
-def save_to_notion_enhanced(text, ai_title, ai_summary, user_id):
+def save_to_notion_enhanced(text, ai_title, ai_summary, user_id, type_name="語音筆記"):
     if not notion_token or not notion_database_id or "your_" in notion_token:
         app.logger.error("Notion configurations are missing or invalid.")
         return False, None
@@ -126,7 +126,7 @@ def save_to_notion_enhanced(text, ai_title, ai_summary, user_id):
             "類型": {
                 "multi_select": [
                     {
-                        "name": "語音筆記"
+                        "name": type_name
                     }
                 ]
             },
@@ -207,15 +207,75 @@ def handle_message(event):
         # 非白名單使用者，不回應或回應無權限
         return
 
+    text = event.message.text.strip()
+
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
-        # 回覆一樣的訊息 (Echo)
-        line_bot_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=event.message.text)]
+
+        if text.startswith("/a"):
+            # 處理文字摘要請求
+            content_to_summarize = text[2:].strip()
+            if not content_to_summarize:
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text="請在 /a 後面加上要摘要的文字。")]
+                    )
+                )
+                return
+
+            try:
+                # 產生標題與摘要
+                ai_title, ai_summary = get_ai_title_and_summary(content_to_summarize)
+                
+                # 儲存到 Notion
+                notion_status = ""
+                record_time = ""
+                if notion_token and notion_database_id and "your_" not in notion_token:
+                    success, time_str = save_to_notion_enhanced(
+                        content_to_summarize, 
+                        ai_title, 
+                        ai_summary, 
+                        user_id, 
+                        type_name="文字摘要"
+                    )
+                    if success:
+                        notion_status = "\n\n(已儲存摘要至 Notion)"
+                        record_time = time_str
+                    else:
+                        notion_status = "\n\n(Notion 儲存失敗)"
+                
+                # 回覆使用者
+                # 如果沒有儲存成功，時間使用當下時間
+                if not record_time:
+                    tz = timezone(timedelta(hours=8))
+                    record_time = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+                reply_msg = f"【{ai_title}】\n\n{ai_summary}\n\n---\n原始文字：{content_to_summarize[:50]}...\n\n時間：{record_time}{notion_status}"
+                
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text=reply_msg)]
+                    )
+                )
+            except Exception as e:
+                app.logger.error(f"Error processing text summary: {e}")
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text="抱歉，摘要處理失敗。")]
+                    )
+                )
+
+        else:
+            # 回覆一樣的訊息 (Echo)
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=event.message.text)]
+                )
             )
-        )
 
 @handler.add(MessageEvent, message=AudioMessageContent)
 def handle_audio_message(event):
