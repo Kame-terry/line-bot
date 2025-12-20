@@ -817,5 +817,6 @@ def handle_image_message(event):
                 os.remove(temp_file_path)
 
 if __name__ == "__main__":
-    # 本地測試時使用 8000 port
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    # Zeabur 會提供 PORT 環境變數
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
