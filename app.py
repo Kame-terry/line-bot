@@ -235,21 +235,36 @@ def fetch_url_content(url):
                     "resultsLimit": 1,
                 }
                 # 改用 Actor 名稱呼叫
+                app.logger.info(f"Calling Apify Actor with input: {run_input}")
                 run = apify_client.actor("apify/facebook-posts-scraper").call(run_input=run_input)
-                app.logger.info(f"Apify run finished. Dataset ID: {run.get('defaultDatasetId')}")
+                
+                if not run:
+                    app.logger.error("Apify run object is None.")
+                    return "Apify 執行失敗（無回傳值）。"
+
+                dataset_id = run.get('defaultDatasetId')
+                app.logger.info(f"Apify run finished. Dataset ID: {dataset_id}")
                 
                 # 取得結果
-                dataset_items = apify_client.dataset(run["defaultDatasetId"]).list_items().items
+                dataset_items = apify_client.dataset(dataset_id).list_items().items
+                app.logger.info(f"Dataset items count: {len(dataset_items)}")
+
                 if dataset_items:
                     post = dataset_items[0]
+                    # 印出第一筆資料的結構以供除錯
+                    app.logger.info(f"First item keys: {list(post.keys())}")
+                    app.logger.info(f"First item content sample: {str(post)[:200]}")
+
                     text = post.get("text") or post.get("postText") or ""
                     # 如果有 comments 也可以抓，這裡先只抓內文
+                    if not text:
+                         app.logger.warning("Text field is empty in the dataset item.")
                     return text[:8000]
                 else:
                     app.logger.warning("Apify run completed but returned no items.")
                     return "Apify 未能抓取到內容，可能是權限或貼文不存在。"
             except Exception as e:
-                app.logger.error(f"Apify execution failed: {e}")
+                app.logger.error(f"Apify execution failed: {e}", exc_info=True)
                 return f"Facebook 爬蟲執行失敗: {str(e)}"
 
         # 判斷是否為 Threads
