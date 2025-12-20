@@ -657,6 +657,11 @@ def handle_audio_message(event):
 def upload_to_drive(file_path, original_filename):
     """上傳檔案至 Google Drive"""
     drive_folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+    
+    # 支援從環境變數讀取 JSON 字串
+    token_json_str = os.getenv('GOOGLE_TOKEN_JSON')
+    creds_json_str = os.getenv('GOOGLE_CREDENTIALS_JSON')
+    
     token_file = os.getenv('GOOGLE_OAUTH_TOKEN', 'token.json')
     credential_file = os.getenv('GOOGLE_OAUTH_CREDENTIALS', 'credentials.json')
 
@@ -667,20 +672,37 @@ def upload_to_drive(file_path, original_filename):
     creds = None
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
-    if os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+    # 1. 優先嘗試從環境變數讀取 Token
+    if token_json_str:
+        try:
+            token_info = json.loads(token_json_str)
+            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+        except Exception as e:
+            app.logger.error(f"Error parsing GOOGLE_TOKEN_JSON: {e}")
+
+    # 2. 如果沒讀到，嘗試從檔案讀取 Token
+    if not creds and os.path.exists(token_file):
+        try:
+            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+        except Exception as e:
+            app.logger.error(f"Error loading token from file: {e}")
     
+    # 3. 檢查憑證是否有效，若過期嘗試刷新
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                with open(token_file, 'w') as token:
-                    token.write(creds.to_json())
+                
+                # 如果是檔案模式，嘗試更新檔案
+                if os.path.exists(token_file):
+                    with open(token_file, 'w') as token:
+                        token.write(creds.to_json())
+                # 注意：環境變數模式下，這裡無法更新雲端平台的變數，但暫時可用。
             except Exception as e:
                 app.logger.error(f"Error refreshing token: {e}")
                 return None
         else:
-            app.logger.error("Token is invalid or missing. Please run auth_google.py locally.")
+            app.logger.error("Token is invalid or missing. Please set GOOGLE_TOKEN_JSON or run auth_google.py locally.")
             return None
 
     try:
