@@ -675,34 +675,46 @@ def upload_to_drive(file_path, original_filename):
     # 1. 優先嘗試從環境變數讀取 Token
     if token_json_str:
         try:
+            app.logger.info("Attempting to use GOOGLE_TOKEN_JSON from environment variables.")
             token_info = json.loads(token_json_str)
             creds = Credentials.from_authorized_user_info(token_info, SCOPES)
         except Exception as e:
-            app.logger.error(f"Error parsing GOOGLE_TOKEN_JSON: {e}")
+            app.logger.error(f"Error parsing GOOGLE_TOKEN_JSON from env: {e}")
 
     # 2. 如果沒讀到，嘗試從檔案讀取 Token
-    if not creds and os.path.exists(token_file):
-        try:
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-        except Exception as e:
-            app.logger.error(f"Error loading token from file: {e}")
+    if not creds:
+        if os.path.exists(token_file):
+            try:
+                app.logger.info(f"Attempting to use token file: {token_file}")
+                creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+            except Exception as e:
+                app.logger.error(f"Error loading token from file {token_file}: {e}")
+        else:
+            app.logger.warning(f"Token file {token_file} not found.")
     
     # 3. 檢查憑證是否有效，若過期嘗試刷新
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
+                app.logger.info("Refreshing expired Google Drive token...")
                 creds.refresh(Request())
                 
                 # 如果是檔案模式，嘗試更新檔案
                 if os.path.exists(token_file):
-                    with open(token_file, 'w') as token:
-                        token.write(creds.to_json())
-                # 注意：環境變數模式下，這裡無法更新雲端平台的變數，但暫時可用。
+                    try:
+                        with open(token_file, 'w') as token:
+                            token.write(creds.to_json())
+                        app.logger.info(f"Successfully updated token file: {token_file}")
+                    except Exception as fe:
+                        app.logger.error(f"Failed to write updated token to file: {fe}")
             except Exception as e:
                 app.logger.error(f"Error refreshing token: {e}")
                 return None
         else:
-            app.logger.error("Token is invalid or missing. Please set GOOGLE_TOKEN_JSON or run auth_google.py locally.")
+            msg = "Google Drive token is missing, invalid, or lacks refresh_token."
+            if not creds:
+                msg += " (No credentials could be loaded)"
+            app.logger.error(msg)
             return None
 
     try:
