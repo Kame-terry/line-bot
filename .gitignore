@@ -1,2 +1,6 @@
 # Environments
 .env
+
+# Google Drive OAuth Credentials
+credentials.json
+token.json
