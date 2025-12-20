@@ -265,8 +265,12 @@ def fetch_url_content(url):
                     app.logger.warning("Apify run completed but returned no items.")
                     return "Apify 未能抓取到內容，可能是權限或貼文不存在。"
             except Exception as e:
+                error_msg = str(e)
+                if "quota" in error_msg.lower() or "limit" in error_msg.lower() or "credit" in error_msg.lower():
+                    app.logger.error(f"Apify quota exceeded: {error_msg}")
+                    return "抱歉，Facebook 爬蟲額度已用完，請聯絡管理員更新 API Token。"
                 app.logger.error(f"Apify execution failed: {e}", exc_info=True)
-                return f"Facebook 爬蟲執行失敗: {str(e)}"
+                return f"Facebook 爬蟲執行失敗: {error_msg}"
 
         # 判斷是否為 Threads
         elif "threads.net" in url:
